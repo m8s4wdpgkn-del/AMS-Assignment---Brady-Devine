@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hands-on Map — Miami (interactive)</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-sA+gJ4v2Vn5jD9Ox5rN/3p8z0v1gqvT+OYkZbZ6kN3A=" crossorigin=""/>
+  <style>
+    html,body,#map { height: 100%; margin: 0; padding: 0; }
+    #map { position: relative; }
+    .controls {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.9);
+      padding: 8px;
+      border-radius: 6px;
+      font-family: sans-serif;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .legend {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.9);
+      padding: 8px;
+      border-radius: 6px;
+      font-family: sans-serif;
+      max-width: 220px;
+      font-size: 14px;
+    }
+    .grid-label {
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.9);
+      padding: 6px;
+      border-radius: 6px;
+      font-family: sans-serif;
+    }
+    .print-area { display:inline-block; margin-right:6px; }
+    @media print {
+      .controls, .legend, .grid-label { display: none; }
+      #map { height: 100vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="controls">
+    <div>
+      <button id="printBtn" title="Print the map">Print map</button>
+      <button id="toggleGrid">Toggle grid</button>
+      <button id="toggleMarkers">Toggle markers</button>
+    </div>
+    <div style="margin-top:6px;font-size:12px;color:#333">Tip: Drag markers, add printed stickers, or use yarn for routes.</div>
+  </div>
+
+  <div class="grid-label">Grid: 0.02°</div>
+
+  <div class="legend" id="legend">
+    <strong>Miami landmarks:</strong>
+    <ul style="margin:6px 0 0 18px; padding:0;">
+      <li>Downtown</li>
+      <li>Miami Beach</li>
+      <li>MIA (Airport)</li>
+      <li>Wynwood</li>
+    </ul>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-o9N1j6bG7k2r8a2YqpyDD+qM1w3V/5eHqv8m3Kp3oVM=" crossorigin=""></script>
+
+  <script>
+    // Initialize map centered on Miami
+    var map = L.map('map').setView([25.7617, -80.1918], 12);
+
+    // OSM tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Load points from local GeoJSON (if available) else use inline fallback
+    var miamiPoints = {
+      "type": "FeatureCollection",
+      "features": [
+        {"type":"Feature","properties":{"name":"Downtown Miami","type":"landmark"},"geometry":{"type":"Point","coordinates":[-80.1918,25.7743]}},
+        {"type":"Feature","properties":{"name":"Miami International Airport (MIA)","type":"airport"},"geometry":{"type":"Point","coordinates":[-80.2906,25.7959]}},
+        {"type":"Feature","properties":{"name":"South Beach (Miami Beach)","type":"beach"},"geometry":{"type":"Point","coordinates":[-80.1300,25.7823]}},
+        {"type":"Feature","properties":{"name":"Wynwood Walls","type":"art"},"geometry":{"type":"Point","coordinates":[-80.1993,25.8014]}},
+        {"type":"Feature","properties":{"name":"Vizcaya Museum & Gardens","type":"museum"},"geometry":{"type":"Point","coordinates":[-80.2109,25.7444]}}
+      ]
+    };
+
+    var markerLayer = L.geoJSON(miamiPoints, {
+      pointToLayer: function(feature, latlng) {
+        var icon = L.circleMarker(latlng, {radius:8, color:'#d9534f', fillColor:'#f0ad4e', fillOpacity:0.9});
+        return icon;
+      },
+      onEachFeature: function(feature, layer) {
+        var props = feature.properties || {};
+        var popupHtml = '<strong>' + (props.name || 'Unknown') + '</strong>';
+        if (props.type) popupHtml += '<br/><em>' + props.type + '</em>';
+        popupHtml += '<br/><small>Drag marker to plan activities.</small>';
+        layer.bindPopup(popupHtml);
+        layer.options.draggable = true;
+      }
+    }).addTo(map);
+
+    // Enable dragging by converting to marker on click (simple behavior)
+    markerLayer.eachLayer(function(layer){
+      var latlng = layer.getLatLng();
+      var marker = L.marker(latlng, {draggable:true});
+      marker.bindPopup(layer.getPopup().getContent());
+      marker.addTo(map);
+      // replace layer visually by marker
+      layer.remove();
+    });
+
+    // Grid overlay (latitude-longitude grid)
+    var grid = L.layerGroup();
+    function drawGrid(stepDegrees) {
+      grid.clearLayers();
+      var bounds = map.getBounds();
+      var south = bounds.getSouth();
+      var north = bounds.getNorth();
+      var west = bounds.getWest();
+      var east = bounds.getEast();
+      // extend a bit to make clean grid
+      south = Math.floor(south / stepDegrees) * stepDegrees - stepDegrees;
+      west = Math.floor(west / stepDegrees) * stepDegrees - stepDegrees;
+      north = Math.ceil(north / stepDegrees) * stepDegrees + stepDegrees;
+      east = Math.ceil(east / stepDegrees) * stepDegrees + stepDegrees;
+      // vertical lines (longitudes)
+      for (var lon = west; lon <= east; lon += stepDegrees) {
+        var line = L.polyline([[south, lon],[north, lon]], {color:'#333', weight:1, opacity:0.25, dashArray: '4 4'});
+        grid.addLayer(line);
+      }
+      // horizontal lines (latitudes)
+      for (var lat = south; lat <= north; lat += stepDegrees) {
+        var line = L.polyline([[lat, west],[lat, east]], {color:'#333', weight:1, opacity:0.25, dashArray: '4 4'});
+        grid.addLayer(line);
+      }
+      // small labels for grid lines
+      for (var lat = south; lat <= north; lat += stepDegrees) {
+        for (var lon = west; lon <= east; lon += stepDegrees) {
+          var label = L.marker([lat + stepDegrees*0.02, lon + stepDegrees*0.02], {
+            icon: L.divIcon({className:'grid-text', html: '<small style="color:#333">' + lat.toFixed(3) + ',' + lon.toFixed(3) + '</small>', iconSize:[80,12]})
+          });
+          grid.addLayer(label);
+        }
+      }
+    }
+
+    var gridOn = false;
+    var gridStep = 0.02;
+    document.getElementById('toggleGrid').addEventListener('click', function(){
+      gridOn = !gridOn;
+      if (gridOn) {
+        drawGrid(gridStep);
+        grid.addTo(map);
+      } else {
+        grid.remove();
+      }
+    });
+
+    // Update grid when zoom/move if active
+    map.on('moveend', function(){
+      if (gridOn) drawGrid(gridStep);
+    });
+
+    // Toggle markers show/hide
+    var markersShown = true;
+    document.getElementById('toggleMarkers').addEventListener('click', function(){
+      markersShown = !markersShown;
+      if (markersShown) {
+        // re-add markers: they are markers currently (draggable)
+        map.eachLayer(function(layer){
+          // nothing here; markers are already on map
+        });
+        // simplest behavior: reload page to restore
+        // but we'll just set opacity for all marker icons
+        map.eachLayer(function(layer){
+          if (layer instanceof L.Marker && !layer._icon.classList.contains('leaflet-marker-icon-hidden')) {
+            layer._icon.style.display = '';
+          }
+        });
+      } else {
+        map.eachLayer(function(layer){
+          if (layer instanceof L.Marker && layer._icon) {
+            layer._icon.style.display = 'none';
+          }
+        });
+      }
+    });
+
+    // Print button — prints whole page; user can select "Save as PDF" or print actual paper
+    document.getElementById('printBtn').addEventListener('click', function(){
+      window.print();
+    });
+
+    // Basic instructions overlay on first load (use localStorage to hide later)
+    if (!localStorage.getItem('miamiMapSeen')) {
+      alert('Hands-on map ready.\n\n- Toggle grid to print with a labeled grid.\n- Drag markers to plan routes/activities.\n- Use Print to create a printable sheet. \n\nFor tactile activities: print on thicker paper and add yarn, stickers, or raised paint.');
+      localStorage.setItem('miamiMapSeen', '1');
+    }
+
+  </script>
+</body>
+</html>
